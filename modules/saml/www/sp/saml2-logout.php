@@ -49,6 +49,40 @@ if ($message instanceof SAML2_LogoutResponse) {
 		/* Somehow, our RelayState has been lost. */
 		throw new SimpleSAML_Error_BadRequest('Missing RelayState in logout response.');
 	}
+	
+	/* Code fix by Ruud:
+	 * Validate Destination attribute if a signed logoutresponse is received
+	 * Atttribute is mandatory for signed response as per the SAML binding specifications
+	 * as described in http://docs.oasis-open.org/security/saml/v2.0/saml-bindings-2.0-os.pdf on page 19)
+	 * Untested - the OpenAM IDP does not send the Destination attribute so I can not check if this is working. 
+	 *            Therefore the code is commented out
+	*/ 
+	$enabled = $idpMetadata->getBoolean('redirect.validate', NULL);
+	if ($enabled === NULL) {
+		$enabled = $spMetadata->getBoolean('redirect.validate', NULL);
+	}
+	if ($enabled) {
+		$dst = $idpMetadata->getEndpointPrioritizedByBinding('SingleLogoutService', array(
+			SAML2_Const::BINDING_HTTP_REDIRECT,
+			SAML2_Const::BINDING_HTTP_POST)
+		);
+
+		if (!$binding instanceof SAML2_SOAP) {
+				$binding = SAML2_Binding::getBinding($dst['Binding']);
+				if (isset($dst['ResponseLocation'])) {
+						$dst = $dst['ResponseLocation'];
+				} else {
+						$dst = $dst['Location'];
+				}
+
+				SimpleSAML_Logger::warning('RUUD dst = ' . $dst . ' msg = ' . $message->getDestination());
+
+
+				if ($dst !== $message->getDestination() ) {
+					throw new SimpleSAML_Error_BadRequest('Invalid Destination in logout response.');
+				}
+		}
+	}
 
 	if (!$message->isSuccess()) {
 		SimpleSAML_Logger::warning('Unsuccessful logout. Status was: ' . sspmod_saml_Message::getResponseError($message));
@@ -128,7 +162,19 @@ if ($message instanceof SAML2_LogoutResponse) {
 		}
 		$binding->setDestination($dst);
 	}
-	$lr->setDestination($dst);
+	
+	/* Code fix by Ruud:
+	 * Add destination attribute if a signed logoutresponse is requested
+	 * Atttribute is mandatory for signed response as per the SAML binding specifications
+	 * as described in http://docs.oasis-open.org/security/saml/v2.0/saml-bindings-2.0-os.pdf on page 19)
+	 */
+	$enabled = $idpMetadata->getBoolean('redirect.sign', NULL);
+	if ($enabled === NULL) {
+		$enabled = $spMetadata->getBoolean('redirect.sign', NULL);
+	}
+	if ($enabled) {
+		$lr->setDestination($dst);
+	}   
 
 	$binding->send($lr);
 } else {
